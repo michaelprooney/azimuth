@@ -3,6 +3,12 @@ export/
 .env
 *.env
 .garminconnect/
+dashboard/data/
+
+# === Debug artifacts ===
+sso_debug_logs/
+sso_mfa_page.html
+sso_debug_widget.html
 
 # === Python ===
 __pycache__/
@@ -48,3 +54,9 @@ obj/
 *.user
 *.suo
 *.userprefs
+
+
+# === Garmin ===
+dashboard/data/*
+dashboard/__pycache__/*
+dashboard/export/*

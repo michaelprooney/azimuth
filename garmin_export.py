@@ -199,6 +199,113 @@ def _print_login_error(exc: Exception, attempt: int, max_attempts: int):
         print(f"\n  You have {remaining} {'attempt' if remaining == 1 else 'attempts'} left. Try again:\n")
 
 
+def _mfa_prompt_lines(garmin: Garmin) -> list[str]:
+    """Describe what kind of verification code Garmin is asking for."""
+    client = getattr(garmin, "client", None)
+    flow = getattr(client, "_mfa_flow", "") if client else ""
+    method = (getattr(client, "_mfa_method", "email") if client else "email") or "email"
+    method = method.lower()
+
+    # Portal/mobile flows explicitly return MFA_REQUIRED from Garmin's API.
+    if flow in ("portal", "ios") and method == "email":
+        return [
+            "Garmin wants a one-time verification code (this is not your password).",
+            "Check the inbox for your Garmin account email for a numeric code.",
+        ]
+    if flow == "widget" or method == "email":
+        return [
+            "Garmin wants a one-time verification code (this is not your password).",
+            "Check the inbox for your Garmin account email for a numeric code.",
+        ]
+    if method in ("totp", "authenticator", "app"):
+        return [
+            "Garmin wants a code from your authenticator app.",
+            "Open the app you set up for Garmin Connect and enter the current code.",
+        ]
+    return [
+        "Garmin wants a verification code (email or authenticator app).",
+    ]
+
+
+def _is_real_mfa_challenge(garmin: Garmin) -> bool:
+    """Return True only when Garmin is actually asking for a verification code."""
+    client = getattr(garmin, "client", None)
+    if client is None:
+        return True
+
+    flow = getattr(client, "_mfa_flow", "")
+    if flow in ("portal", "ios"):
+        # JSON response explicitly said MFA_REQUIRED.
+        return True
+
+    if flow != "widget":
+        return True
+
+    resp = getattr(client, "_widget_last_resp", None)
+    html = (getattr(resp, "text", "") or "").lower()
+    if not html:
+        return False
+
+    # Real widget MFA pages contain code-entry markers. The page title
+    # "GARMIN Authentication Application" is also used for the ordinary
+    # sign-in form, so title alone is not enough.
+    mfa_markers = (
+        "mfa-code",
+        "setupentermfacode",
+        "enter mfa code",
+        "verification code",
+        "one-time code",
+        "verifymfa",
+    )
+    if any(marker in html for marker in mfa_markers):
+        return True
+
+    # Still showing username/password — not an MFA step.
+    if 'name="password"' in html or "sign in" in html:
+        return False
+
+    return False
+
+
+def _prompt_for_mfa(garmin: Garmin, client_state: Any) -> None:
+    print()
+    for line in _mfa_prompt_lines(garmin):
+        print(f"  {line}")
+    print()
+    mfa_code = input("  Verification code: ").strip()
+    garmin.resume_login(client_state, mfa_code)
+
+
+def _complete_credential_login(garmin: Garmin) -> None:
+    """Run garmin.login() and handle real vs false MFA prompts."""
+    result1, result2 = garmin.login()
+    if result1 != "needs_mfa":
+        return
+
+    if _is_real_mfa_challenge(garmin):
+        _prompt_for_mfa(garmin, result2)
+        return
+
+    log.warning(
+        "Garmin returned a sign-in page that looked like MFA, but no verification "
+        "step was actually started (no code is sent). Retrying without widget login..."
+    )
+    garmin.client.skip_strategies.add("widget+cffi")
+    garmin.client._clear_auth_state()
+    result1, result2 = garmin.login()
+    if result1 != "needs_mfa":
+        return
+    if _is_real_mfa_challenge(garmin):
+        _prompt_for_mfa(garmin, result2)
+        return
+
+    raise GarminConnectConnectionError(
+        "Login did not complete and Garmin did not start email/app verification. "
+        "This usually means your account is rate-limited (429). "
+        "Wait 30-60 minutes, then run: python3 garmin_export.py --login"
+    )
+
+
 def authenticate(tokenstore: str) -> Garmin:
     """Authenticate to Garmin Connect.
 
@@ -259,8 +366,15 @@ def authenticate(tokenstore: str) -> Garmin:
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         try:
-            result1, result2 = garmin.login()
+            _complete_credential_login(garmin)
             break
+        except GarminConnectTooManyRequestsError as e:
+            log.error(
+                "Garmin is rate-limiting login attempts (429). "
+                "Wait 30-60 minutes before trying again."
+            )
+            log.debug(f"Details: {e}")
+            sys.exit(1)
         except GarminConnectAuthenticationError as e:
             _print_login_error(e, attempt, max_attempts)
             if attempt == max_attempts:
@@ -270,7 +384,7 @@ def authenticate(tokenstore: str) -> Garmin:
             password = getpass("  Garmin password: ")
             garmin = Garmin(email=email, password=password, is_cn=False, return_on_mfa=True)
         except GarminConnectConnectionError as e:
-            log.error(f"Connection error -- can't reach Garmin servers. Check your internet.")
+            log.error(f"Login failed: {_friendly_login_error(e)}")
             log.debug(f"Details: {e}")
             sys.exit(1)
         except (GarthHTTPError, Exception) as e:
@@ -281,14 +395,9 @@ def authenticate(tokenstore: str) -> Garmin:
             password = getpass("  Garmin password: ")
             garmin = Garmin(email=email, password=password, is_cn=False, return_on_mfa=True)
 
-    if result1 == "needs_mfa":
-        print()
-        mfa_code = input("  Enter MFA/2FA code from your authenticator app: ").strip()
-        garmin.resume_login(result2, mfa_code)
-
-    # Save tokens for next time
+    # Save tokens for next time (garminconnect 0.3.x uses client.dump, not garth)
     tokenstore_path.mkdir(parents=True, exist_ok=True)
-    garmin.garth.dump(str(tokenstore_path))
+    garmin.client.dump(str(tokenstore_path))
     log.info(f"Authenticated -- tokens saved to {tokenstore_path}")
     log.info("   (Future runs will use cached tokens automatically)")
     return garmin
