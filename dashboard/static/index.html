@@ -4,81 +4,193 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Azimuth Fitness</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <header class="header">
-    <div>
-      <h1>Azimuth Fitness</h1>
-      <p class="subtitle" id="status-line">Loading export status…</p>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">A</div>
+        <div>
+          <div class="brand-name">Azimuth</div>
+          <div class="brand-tag">Fitness Dashboard</div>
+        </div>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-view="overview">
+          <span class="nav-icon">◉</span> Overview
+        </button>
+        <button class="nav-item" data-view="activities">
+          <span class="nav-icon">◎</span> Activities
+        </button>
+        <button class="nav-item" data-view="goals">
+          <span class="nav-icon">◆</span> Goals
+        </button>
+        <button class="nav-item" data-view="coach">
+          <span class="nav-icon">✦</span> Coach
+        </button>
+      </nav>
+      <div class="sidebar-footer">
+        <button id="btn-export" class="btn sync-btn">
+          <span class="sync-icon">↻</span> Sync Garmin
+        </button>
+        <p class="status-line" id="status-line">Loading…</p>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="view-title">Overview</h1>
+          <p class="topbar-sub" id="view-subtitle">Your fitness at a glance</p>
+        </div>
+        <div class="period-pills" id="period-pills">
+          <button class="pill" data-days="7">7d</button>
+          <button class="pill" data-days="14">14d</button>
+          <button class="pill active" data-days="30">30d</button>
+          <button class="pill" data-days="90">90d</button>
+        </div>
+      </header>
+
+      <!-- Overview -->
+      <section class="view active" id="view-overview">
+        <div class="hero card" id="today-hero">
+          <div class="hero-content">
+            <span class="hero-label">Today</span>
+            <h2 id="hero-date">—</h2>
+            <p class="hero-message" id="hero-message">Loading your day…</p>
+          </div>
+          <div class="hero-stats" id="hero-stats"></div>
+        </div>
+
+        <div class="stat-grid" id="stat-grid"></div>
+
+        <div class="training-strip card" id="training-strip">
+          <h3>Training Profile</h3>
+          <div class="training-chips" id="training-chips"></div>
+        </div>
+
+        <div class="charts-grid">
+          <div class="card chart-card">
+            <div class="card-head">
+              <h3>Steps</h3>
+              <span class="card-hint">Daily trend</span>
+            </div>
+            <div class="chart-wrap"><canvas id="chart-steps"></canvas></div>
+          </div>
+          <div class="card chart-card">
+            <div class="card-head">
+              <h3>Sleep</h3>
+              <span class="card-hint">Hours per night</span>
+            </div>
+            <div class="chart-wrap"><canvas id="chart-sleep"></canvas></div>
+          </div>
+          <div class="card chart-card">
+            <div class="card-head">
+              <h3>Resting Heart Rate</h3>
+              <span class="card-hint">Lower is often better</span>
+            </div>
+            <div class="chart-wrap"><canvas id="chart-rhr"></canvas></div>
+          </div>
+          <div class="card chart-card">
+            <div class="card-head">
+              <h3>Stress</h3>
+              <span class="card-hint">Daily average</span>
+            </div>
+            <div class="chart-wrap"><canvas id="chart-stress"></canvas></div>
+          </div>
+          <div class="card chart-card wide">
+            <div class="card-head">
+              <h3>Weekly Training Volume</h3>
+              <span class="card-hint">Distance &amp; activity count</span>
+            </div>
+            <div class="chart-wrap tall"><canvas id="chart-volume"></canvas></div>
+          </div>
+        </div>
+
+        <div class="card insights-launch-card">
+          <div class="insights-launch-inner">
+            <div>
+              <h3>AI Training Insights</h3>
+              <p>Personalized analysis of your Garmin data, recovery signals, and goals.</p>
+            </div>
+            <button id="btn-open-insights" class="btn primary">Open Analysis</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Activities -->
+      <section class="view" id="view-activities">
+        <div class="card">
+          <div class="card-head">
+            <h3>Recent Activities</h3>
+            <span class="card-hint" id="activities-count">—</span>
+          </div>
+          <div id="activities-list" class="activities-list"></div>
+        </div>
+      </section>
+
+      <!-- Goals -->
+      <section class="view" id="view-goals">
+        <div class="card">
+          <h3>Your Goals</h3>
+          <form id="goal-form" class="goal-form">
+            <input type="text" id="goal-text" placeholder="e.g. Run 40 miles per week" required />
+            <input type="date" id="goal-date" />
+            <select id="goal-category">
+              <option value="general">General</option>
+              <option value="running">Running</option>
+              <option value="cycling">Cycling</option>
+              <option value="strength">Strength</option>
+              <option value="weight">Weight</option>
+              <option value="recovery">Recovery</option>
+            </select>
+            <button type="submit" class="btn primary">Add Goal</button>
+          </form>
+          <ul id="goals-list" class="goals-list"></ul>
+        </div>
+      </section>
+
+      <!-- Coach -->
+      <section class="view" id="view-coach">
+        <div class="card chat-card">
+          <div class="chat-header">
+            <div>
+              <h3>Fitness Coach</h3>
+              <p class="chat-sub">Ask about training, recovery, pacing, and goals</p>
+            </div>
+            <button id="btn-clear-chat" class="btn secondary small">Clear</button>
+          </div>
+          <div id="chat-log" class="chat-log"></div>
+          <form id="chat-form" class="chat-form">
+            <textarea id="chat-input" rows="2" placeholder="What should I focus on this week?" required></textarea>
+            <button type="submit" class="btn primary">Send</button>
+          </form>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Activity detail drawer -->
+  <div id="activity-drawer" class="drawer hidden" aria-hidden="true">
+    <div class="drawer-backdrop" id="drawer-backdrop"></div>
+    <div class="drawer-panel">
+      <header class="drawer-header">
+        <div>
+          <span class="drawer-type" id="drawer-type">—</span>
+          <h2 id="drawer-title">Activity</h2>
+          <p class="drawer-date" id="drawer-date">—</p>
+        </div>
+        <button id="drawer-close" class="btn icon-btn" aria-label="Close">×</button>
+      </header>
+      <div class="drawer-body" id="drawer-body"></div>
     </div>
-    <div class="header-actions">
-      <button id="btn-export" class="btn secondary">Sync Garmin Data</button>
-    </div>
-  </header>
+  </div>
 
-  <main class="grid">
-    <section class="card metrics-card">
-      <h2>Last 30 Days</h2>
-      <div class="metrics" id="metrics">
-        <div class="metric"><span class="label">Avg Steps</span><span class="value" id="m-steps">—</span></div>
-        <div class="metric"><span class="label">Avg Sleep</span><span class="value" id="m-sleep">—</span></div>
-        <div class="metric"><span class="label">Resting HR</span><span class="value" id="m-rhr">—</span></div>
-        <div class="metric"><span class="label">Avg Stress</span><span class="value" id="m-stress">—</span></div>
-        <div class="metric"><span class="label">Activities</span><span class="value" id="m-acts">—</span></div>
-        <div class="metric"><span class="label">Days w/ Data</span><span class="value" id="m-days">—</span></div>
-      </div>
-    </section>
-
-    <section class="card insights-launch-card">
-      <h2>AI Coach</h2>
-      <p class="insights-blurb">Get a personalized analysis of your Garmin training data, recovery signals, and goals — then ask follow-up questions.</p>
-      <button id="btn-open-insights" class="btn primary insights-launch-btn">Open AI Training Insights</button>
-    </section>
-
-    <section class="card">
-      <h2>Your Goals</h2>
-      <form id="goal-form" class="goal-form">
-        <input type="text" id="goal-text" placeholder="e.g. Run 40 miles per week" required />
-        <input type="date" id="goal-date" />
-        <select id="goal-category">
-          <option value="general">General</option>
-          <option value="running">Running</option>
-          <option value="cycling">Cycling</option>
-          <option value="strength">Strength</option>
-          <option value="weight">Weight</option>
-          <option value="recovery">Recovery</option>
-        </select>
-        <button type="submit" class="btn primary">Add Goal</button>
-      </form>
-      <ul id="goals-list" class="goals-list"></ul>
-    </section>
-
-    <section class="card chat-card">
-      <div class="chat-header">
-        <h2>Fitness Coach Chat</h2>
-        <button id="btn-clear-chat" class="btn secondary small">Clear</button>
-      </div>
-      <div id="chat-log" class="chat-log"></div>
-      <form id="chat-form" class="chat-form">
-        <textarea id="chat-input" rows="2" placeholder="Ask about training, recovery, pacing, goals…" required></textarea>
-        <button type="submit" class="btn primary">Send</button>
-      </form>
-    </section>
-
-    <section class="card wide">
-      <h2>Recent Activities</h2>
-      <div id="activities" class="activities-table-wrap">
-        <table>
-          <thead>
-            <tr><th>Date</th><th>Name</th><th>Type</th><th>Dist (km)</th><th>Duration</th><th>Avg HR</th></tr>
-          </thead>
-          <tbody id="activities-body"></tbody>
-        </table>
-      </div>
-    </section>
-  </main>
-
+  <!-- Insights overlay -->
   <div id="insights-overlay" class="insights-overlay hidden" aria-hidden="true">
     <div class="insights-shell">
       <header class="insights-header">
@@ -88,17 +200,25 @@
         </div>
         <div class="insights-header-actions">
           <button id="btn-insights-refresh" class="btn secondary">Refresh Analysis</button>
-          <button id="btn-insights-close" class="btn secondary" aria-label="Close">Close</button>
+          <button id="btn-insights-close" class="btn secondary">Close</button>
         </div>
       </header>
       <div id="insights-log" class="insights-log"></div>
       <form id="insights-form" class="insights-form">
-        <textarea id="insights-input" rows="2" placeholder="Ask a follow-up about your training, recovery, or goals…" required></textarea>
+        <textarea id="insights-input" rows="2" placeholder="Ask a follow-up about your training…" required></textarea>
         <button type="submit" class="btn primary">Send</button>
       </form>
     </div>
   </div>
 
+  <nav class="mobile-nav">
+    <button class="mobile-nav-item active" data-view="overview">Overview</button>
+    <button class="mobile-nav-item" data-view="activities">Activities</button>
+    <button class="mobile-nav-item" data-view="goals">Goals</button>
+    <button class="mobile-nav-item" data-view="coach">Coach</button>
+  </nav>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
   <script src="/static/app.js"></script>

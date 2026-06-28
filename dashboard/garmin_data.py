@@ -112,6 +112,8 @@ def _extract_day_metrics(day: dict[str, Any]) -> dict[str, Any]:
     moderate = intensity.get("moderateMinutes") or intensity.get("moderateIntensityMinutes")
     vigorous = intensity.get("vigorousMinutes") or intensity.get("vigorousIntensityMinutes")
 
+    body_battery = _extract_body_battery(day.get("body_battery"))
+
     return {
         "steps": steps,
         "distance_km": round(distance_m / 1000, 2) if isinstance(distance_m, (int, float)) else None,
@@ -121,11 +123,32 @@ def _extract_day_metrics(day: dict[str, Any]) -> dict[str, Any]:
         "avg_stress": avg_stress,
         "moderate_minutes": moderate,
         "vigorous_minutes": vigorous,
+        "body_battery_high": body_battery.get("high"),
+        "body_battery_low": body_battery.get("low"),
+        "body_battery_charged": body_battery.get("charged"),
+        "body_battery_drained": body_battery.get("drained"),
     }
 
 
-def daily_metrics_series(days: int = 30) -> list[dict[str, Any]]:
-    end = date.today()
+def _extract_body_battery(raw: Any) -> dict[str, int | None]:
+    if not raw:
+        return {"high": None, "low": None, "charged": None, "drained": None}
+    entry = raw[0] if isinstance(raw, list) and raw else raw
+    if not isinstance(entry, dict):
+        return {"high": None, "low": None, "charged": None, "drained": None}
+
+    values = entry.get("bodyBatteryValuesArray") or []
+    nums = [v[1] for v in values if isinstance(v, (list, tuple)) and len(v) > 1 and isinstance(v[1], (int, float))]
+    return {
+        "high": max(nums) if nums else None,
+        "low": min(nums) if nums else None,
+        "charged": entry.get("charged"),
+        "drained": entry.get("drained"),
+    }
+
+
+def daily_metrics_series(days: int = 30, *, end_offset: int = 0) -> list[dict[str, Any]]:
+    end = date.today() - timedelta(days=end_offset)
     start = end - timedelta(days=days - 1)
     series = []
     d = start
@@ -555,8 +578,7 @@ def resolve_workout_breakdown(
     }
 
 
-def fitness_summary(days: int = 30) -> dict[str, Any]:
-    series = daily_metrics_series(days)
+def _period_averages(series: list[dict[str, Any]]) -> dict[str, float | None]:
     populated = [d for d in series if any(v is not None for k, v in d.items() if k != "date")]
 
     def avg(field: str) -> float | None:
@@ -567,48 +589,182 @@ def fitness_summary(days: int = 30) -> dict[str, Any]:
         vals = [d[field] for d in populated if d.get(field) is not None]
         return round(sum(vals), 2) if vals else None
 
-    recent_activities = list_activities(limit=10)
+    return {
+        "days_with_data": len(populated),
+        "steps": avg("steps"),
+        "sleep_hours": avg("sleep_hours"),
+        "resting_hr": avg("resting_hr"),
+        "avg_stress": avg("avg_stress"),
+        "active_calories": avg("active_calories"),
+        "total_steps": total("steps"),
+        "moderate_minutes": total("moderate_minutes"),
+        "vigorous_minutes": total("vigorous_minutes"),
+    }
+
+
+def _trend_delta(current: float | None, previous: float | None, *, lower_is_better: bool = False) -> dict[str, Any] | None:
+    if current is None or previous is None or previous == 0:
+        return None
+    pct = round(((current - previous) / abs(previous)) * 100, 1)
+    improved = pct < 0 if lower_is_better else pct > 0
+    return {"pct": pct, "direction": "up" if pct > 0 else "down" if pct < 0 else "flat", "improved": improved}
+
+
+def metrics_trends(days: int = 30) -> dict[str, Any]:
+    current = daily_metrics_series(days)
+    previous = daily_metrics_series(days, end_offset=days)
+    cur = _period_averages(current)
+    prev = _period_averages(previous)
+    return {
+        "period_days": days,
+        "current": cur,
+        "previous": prev,
+        "trends": {
+            "steps": _trend_delta(cur.get("steps"), prev.get("steps")),
+            "sleep_hours": _trend_delta(cur.get("sleep_hours"), prev.get("sleep_hours")),
+            "resting_hr": _trend_delta(cur.get("resting_hr"), prev.get("resting_hr"), lower_is_better=True),
+            "avg_stress": _trend_delta(cur.get("avg_stress"), prev.get("avg_stress"), lower_is_better=True),
+            "active_calories": _trend_delta(cur.get("active_calories"), prev.get("active_calories")),
+        },
+    }
+
+
+def today_snapshot() -> dict[str, Any]:
+    today = date.today().isoformat()
+    raw = load_day(today)
+    metrics = _extract_day_metrics(raw) if raw else {}
+    metrics["date"] = today
+    return {
+        "date": today,
+        "metrics": metrics,
+        "has_data": bool(raw),
+    }
+
+
+def weekly_activity_volume(weeks: int = 8) -> list[dict[str, Any]]:
+    activity_dir = CACHE_DIR / "activities"
+    if not activity_dir.exists():
+        return []
+
+    buckets: dict[str, dict[str, Any]] = {}
+    for path in activity_dir.glob("*.json"):
+        data = _load_json(path)
+        if not isinstance(data, dict):
+            continue
+        merged = _activity_record(data)
+        start_time = merged.get("startTimeLocal") or merged.get("startTimeGMT") or ""
+        if not start_time:
+            continue
+        try:
+            act_date = datetime.fromisoformat(str(start_time).replace(" ", "T")[:19]).date()
+        except ValueError:
+            continue
+        iso = act_date.isocalendar()
+        week_key = f"{iso.year}-W{iso.week:02d}"
+        bucket = buckets.setdefault(
+            week_key,
+            {"week": week_key, "start_date": act_date.isoformat(), "count": 0, "distance_km": 0.0, "duration_min": 0.0},
+        )
+        bucket["count"] += 1
+        dist = _activity_distance_km(merged)
+        dur = _activity_duration_min(merged)
+        if dist:
+            bucket["distance_km"] = round(bucket["distance_km"] + dist, 2)
+        if dur:
+            bucket["duration_min"] = round(bucket["duration_min"] + dur, 1)
+
+    ordered = sorted(buckets.values(), key=lambda b: b["week"])
+    return ordered[-weeks:]
+
+
+def fitness_summary(days: int = 30) -> dict[str, Any]:
+    series = daily_metrics_series(days)
+    stats = _period_averages(series)
+    trends = metrics_trends(days)
+    recent_activities = list_activities(limit=15)
     training = load_section("training") or {}
     goals_section = load_section("goals") or {}
 
     return {
         "period_days": days,
-        "days_with_data": len(populated),
+        "days_with_data": stats["days_with_data"],
         "averages": {
-            "steps": avg("steps"),
-            "sleep_hours": avg("sleep_hours"),
-            "resting_hr": avg("resting_hr"),
-            "avg_stress": avg("avg_stress"),
-            "active_calories": avg("active_calories"),
+            "steps": stats["steps"],
+            "sleep_hours": stats["sleep_hours"],
+            "resting_hr": stats["resting_hr"],
+            "avg_stress": stats["avg_stress"],
+            "active_calories": stats["active_calories"],
         },
         "totals": {
-            "steps": total("steps"),
-            "moderate_minutes": total("moderate_minutes"),
-            "vigorous_minutes": total("vigorous_minutes"),
+            "steps": stats["total_steps"],
+            "moderate_minutes": stats["moderate_minutes"],
+            "vigorous_minutes": stats["vigorous_minutes"],
         },
+        "trends": trends["trends"],
         "recent_activities": recent_activities,
-        "training_metrics": _compact_training(training),
+        "training_highlights": _training_highlights(training),
         "garmin_goals": _compact_garmin_goals(goals_section),
         "export_status": export_status(),
-        "daily_series": series[-14:],
+        "daily_series": series,
+        "today": today_snapshot(),
+        "weekly_volume": weekly_activity_volume(8),
     }
 
 
-def _compact_training(training: Any) -> dict[str, Any]:
+def _training_highlights(training: Any) -> dict[str, Any]:
     if not isinstance(training, dict):
         return {}
+
     out: dict[str, Any] = {}
-    for key, val in training.items():
-        if val is None:
-            continue
-        if isinstance(val, dict):
-            for sub_key in ("vo2Max", "vo2MaxValue", "fitnessAge", "trainingStatus",
-                            "trainingReadinessScore", "loadBalance", "lactateThresholdSpeed"):
-                if sub_key in val:
-                    out[f"{key}.{sub_key}"] = val[sub_key]
-        elif not isinstance(val, (list, str)) or (isinstance(val, str) and len(val) < 200):
-            out[key] = val
+
+    fitness_age = training.get("fitness_age")
+    if isinstance(fitness_age, dict):
+        out["fitness_age"] = fitness_age.get("fitnessAge")
+        out["chronological_age"] = fitness_age.get("chronologicalAge")
+
+    vo2 = None
+    for source in (training.get("max_metrics"), training.get("training_status")):
+        if isinstance(source, list) and source:
+            generic = source[0].get("generic") if isinstance(source[0], dict) else None
+            if isinstance(generic, dict):
+                vo2 = generic.get("vo2MaxPreciseValue") or generic.get("vo2MaxValue")
+                break
+        if isinstance(source, dict):
+            vo2_block = source.get("mostRecentVO2Max") or source
+            if isinstance(vo2_block, dict):
+                generic = vo2_block.get("generic")
+                if isinstance(generic, dict):
+                    vo2 = generic.get("vo2MaxPreciseValue") or generic.get("vo2MaxValue")
+                    break
+    if vo2 is not None:
+        out["vo2_max"] = vo2
+
+    status = training.get("training_status")
+    if isinstance(status, dict):
+        recent = status.get("mostRecentTrainingStatus")
+        if isinstance(recent, dict):
+            latest = recent.get("latestTrainingStatusData")
+            if isinstance(latest, dict):
+                for device_data in latest.values():
+                    if isinstance(device_data, dict):
+                        out["training_status"] = device_data.get("trainingStatusFeedbackPhrase")
+                        out["weekly_training_load"] = device_data.get("weeklyTrainingLoad")
+                        out["fitness_trend"] = device_data.get("fitnessTrend")
+                        break
+        balance = status.get("mostRecentTrainingLoadBalance")
+        if isinstance(balance, dict):
+            dto_map = balance.get("metricsTrainingLoadBalanceDTOMap")
+            if isinstance(dto_map, dict):
+                for device_data in dto_map.values():
+                    if isinstance(device_data, dict):
+                        out["load_balance"] = device_data.get("trainingBalanceFeedbackPhrase")
+                        break
+
     return out
+
+
+def _compact_training(training: Any) -> dict[str, Any]:
+    return _training_highlights(training)
 
 
 def _compact_garmin_goals(goals: Any) -> list[dict[str, Any]]:

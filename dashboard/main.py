@@ -57,6 +57,31 @@ def api_summary(days: int = 30):
     return garmin_data.fitness_summary(days)
 
 
+@app.get("/api/metrics/timeseries")
+def api_timeseries(days: int = 30):
+    days = max(1, min(days, 365))
+    return {
+        "period_days": days,
+        "series": garmin_data.daily_metrics_series(days),
+        "trends": garmin_data.metrics_trends(days),
+        "weekly_volume": garmin_data.weekly_activity_volume(8),
+    }
+
+
+@app.get("/api/activities/{activity_id}")
+def api_activity(activity_id: str):
+    details = garmin_data.activity_details(activity_id)
+    if "error" in details:
+        raise HTTPException(404, details["error"])
+    return details
+
+
+@app.get("/api/activities")
+def api_activities(limit: int = 20):
+    limit = max(1, min(limit, 100))
+    return {"activities": garmin_data.list_activities(limit)}
+
+
 @app.get("/api/goals")
 def api_list_goals():
     return {"goals": storage.list_goals()}
